@@ -578,7 +578,7 @@ async function moduleWorker({ newChat = false } = {}) {
 
     try {
         inApiCall = true;
-        let expression = await getExpressionLabel(currentLastMessage.mes);
+        let expression = await getExpressionLabel(currentLastMessage.mes, extension_settings.expressions.api, {characterName: currentLastMessage.name});
 
         // If we're not already overriding the folder name, account for group chats.
         if (spriteFolderName === currentLastMessage.name && !context.groupId) {
@@ -872,8 +872,8 @@ async function uploadSpriteCommand({ name, label, folder = null, spriteName = nu
 
 /**
  * Processes the classification text to reduce the amount of text sent to the API.
- * Quotes and asterisks are to be removed. If the text is less than 300 characters, it is returned as is.
- * If the text is more than 300 characters, the first and last 150 characters are returned.
+ * Quotes and asterisks are to be removed. If the text is less than 500 characters, it is returned as is.
+ * If the text is more than 500 characters, the first and last 250 characters are returned.
  * The result is trimmed to the end of sentence.
  * @param {string} text The text to process.
  * @returns {string}
@@ -993,6 +993,42 @@ function onTextGenSettingsReady(args) {
     }
 }
 
+function getMessagesBefore(name, count = 5) {
+    const context = getContext();
+    const reversedChat = context.chat.slice().reverse();
+
+    // First, find the index of the last message from this avatar
+    const lastMessageIndex = reversedChat.findIndex(x => x.name == name);
+
+    if (lastMessageIndex === -1) {
+        return []; // No message from this avatar found
+    }
+
+    // Get the 5 messages before that message (they're in reverse order)
+    const previousMessages = reversedChat.slice(lastMessageIndex, lastMessageIndex + count);
+
+    // Return them in chronological order
+    return previousMessages.reverse();
+}
+
+function getFormattedHistoryBefore(name, count = 5) {
+    const messages = getMessagesBefore(name, count);
+    let formattedHistory = '';
+
+    messages.forEach(message => {
+        // Skip system messages or format them differently if needed
+        if (message.is_system) {
+            formattedHistory += `System: ${message.mes}\n\n`;
+            return;
+        }
+
+        const role = message.is_user ? 'User' : message.name || 'Assistant';
+        formattedHistory += `${role}: ${message.mes}\n\n`;
+    });
+
+    return formattedHistory;
+}
+
 /**
  * Retrieves the label of an expression via classification based on the provided text.
  * Optionally allows to override the expressions API being used.
@@ -1003,7 +1039,7 @@ function onTextGenSettingsReady(args) {
  * @param {string?} [options.customPrompt=null] - The custom prompt to use for classification.
  * @returns {Promise<string?>} - The label of the expression.
  */
-export async function getExpressionLabel(text, expressionsApi = extension_settings.expressions.api, { filterAvailable = null, customPrompt = null } = {}) {
+export async function getExpressionLabel(text, expressionsApi = extension_settings.expressions.api, { filterAvailable = null, customPrompt = null, characterName = null } = {}) {
     // Return if text is undefined, saving a costly fetch request
     if ((!modules.includes('classify') && expressionsApi == EXPRESSION_API.extras) || !text) {
         return extension_settings.expressions.fallback_expression;
@@ -1013,6 +1049,12 @@ export async function getExpressionLabel(text, expressionsApi = extension_settin
         text = await globalThis.translate(text, 'en');
     }
 
+    if (characterName !== null) {
+        const context = getContext();
+        const lastMessage = context.chat.slice().reverse().find(x => x.name === characterName);
+        console.log("last message: ", lastMessage);
+        text = getFormattedHistoryBefore(lastMessage.name, 5);
+    }
     text = sampleClassifyText(text);
 
     filterAvailable ??= extension_settings.expressions.filterAvailable;
@@ -1925,7 +1967,7 @@ async function onClickExpressionOverrideButton() {
         $('#visual-novel-wrapper').empty();
         await validateImages(overridePath.length === 0 ? currentLastMessage.name : overridePath, true);
         const name = overridePath.length === 0 ? currentLastMessage.name : overridePath;
-        const expression = await getExpressionLabel(currentLastMessage.mes);
+        const expression = await getExpressionLabel(currentLastMessage.mes, extension_settings.expressions.api, {characterName: name});
         await sendExpressionCall(name, expression, { force: true });
         forceUpdateVisualNovelMode();
     } catch (error) {
@@ -1951,7 +1993,7 @@ async function onClickExpressionOverrideRemoveAllButton() {
         $('#visual-novel-wrapper').empty();
         const currentLastMessage = getLastCharacterMessage();
         await validateImages(currentLastMessage.name, true);
-        const expression = await getExpressionLabel(currentLastMessage.mes);
+        const expression = await getExpressionLabel(currentLastMessage.mes, extension_settings.expressions.api, {characterName: currentLastMessage.name});
         await sendExpressionCall(currentLastMessage.name, expression, { force: true });
         forceUpdateVisualNovelMode();
 
